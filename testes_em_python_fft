@@ -16,8 +16,12 @@ import scipy.fftpack as spfft
 from sklearn.linear_model import OrthogonalMatchingPursuit
 
 # Função para calcular o PRD
+
 def calculate_prd(original, reconstructed):
-    return np.sqrt(np.sum((original - reconstructed) ** 2) / np.sum(original ** 2)) * 100
+    return (np.linalg.norm(original - np.real(reconstructed)) / np.linalg.norm(original)) * 100
+
+#def calculate_prd(original, reconstructed):
+    #return np.sqrt(np.sum((original - reconstructed) ** 2) / np.sum(original ** 2)) * 100
 
 # Função para calcular o Erro Médio Quadrático (RMSE)
 def calculate_rmse(original, reconstructed):
