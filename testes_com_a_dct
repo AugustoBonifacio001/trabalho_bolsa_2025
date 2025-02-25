@@ -1,0 +1,173 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Feb 24 08:54:39 2025
+
+@author: josea
+"""
+
+
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.fftpack as spfft
+from sklearn.linear_model import OrthogonalMatchingPursuit
+
+# Função para calcular o PRD
+def calculate_prd(original, reconstructed):
+    return np.sqrt(np.sum((original - reconstructed) ** 2) / np.sum(original ** 2))
+
+# Função para calcular o Erro Médio Quadrático (RMSE)
+def calculate_rmse(original, reconstructed):
+    return np.sqrt(np.mean((original - reconstructed) ** 2))
+
+# Parâmetros do sinal
+Nppc = 136.53  # Número de pontos por ciclo
+Nc = 12        # Número de ciclos
+f = 60         # Frequência fundamental (Hz)
+Fs = 8192      # Frequência de amostragem
+Ts = 1 / Fs    # Período de amostragem
+t = np.linspace(0, (Fs - 1) * Ts, Fs)  # Vetor de tempo
+
+# Sinal harmônico com componentes fundamentais e harmônicos ímpares
+x = np.cos(2 * np.pi * f * t)  # Componente fundamental (60 Hz)
+y = np.zeros_like(x)
+
+harm = [1, 3, 7, 15, 27, 35, 45]
+for i in range(len(harm)):
+    y += (1 / harm[i]) * np.cos(2 * np.pi * harm[i] * f * t)
+
+# Medição da FFT original
+original_fft = 2 * np.abs(np.fft.fft(y) / len(y))[:len(y) // 2]
+frequencies = np.fft.fftfreq(len(y), d=Ts)[:len(y) // 2]
+
+# Amostragem Compressiva
+CR = 50  # Taxa de compressão (%)
+N = Fs
+M = np.round(N * (100 - CR) / 100).astype(int)  # Número de medições
+amostras_aleatorias = np.random.choice(N, M, replace=False)
+amostras_aleatorias.sort()
+s = y[amostras_aleatorias]
+t2 = t[amostras_aleatorias]
+
+plt.figure()
+plt.plot(t2, s, 'ro', label='Amostragem Compressiva')
+plt.plot(t, y, label='Sinal Original')
+plt.legend()
+
+# Matriz de Transformada Cosseno
+A = spfft.idct(np.identity(N), norm='ortho', axis=0)
+A = A[amostras_aleatorias]
+
+# Inicializando matrizes para armazenar os erros e PRD
+num_iteracoes = 200
+erros = np.zeros((num_iteracoes, 7))  # 200 sinais e 7 harmônicas para armazenar os erros
+rmse_values = np.zeros(num_iteracoes)  # Para armazenar os valores de RMSE
+prd_values = np.zeros(num_iteracoes)   # Para armazenar os valores de PRD
+
+# Loop de 1 até 200
+for i in range(num_iteracoes):
+    print(f"Iteração {i+1} de {num_iteracoes} ({(i+1)/num_iteracoes*100:.1f}%)")
+   
+    # Gerando amostras aleatórias do sinal
+    s = y[amostras_aleatorias]
+    t2 = t[amostras_aleatorias]
+
+    # Matriz de Transformada Cosseno
+    A = spfft.idct(np.identity(N), norm='ortho', axis=0)
+    A = A[amostras_aleatorias]
+
+    # Aplicando OMP para reconstrução do sinal
+    omp = OrthogonalMatchingPursuit(n_nonzero_coefs=10)
+    omp.fit(A, s)
+    recovered_signal = omp.coef_
+
+    # Reconstrução do sinal
+    sig = spfft.idct(recovered_signal, norm='ortho', axis=0)
+
+    # Calculando a FFT do sinal reconstruído
+    S = 2 * np.abs(np.fft.fft(sig) / len(sig))[:len(sig) // 2]
+
+    # Cálculo dos erros absolutos para diferentes harmônicas
+    er_h1 = np.abs(original_fft[12] - S[12])
+    er_h3 = np.abs(original_fft[36] - S[36])
+    er_h7 = np.abs(original_fft[84] - S[84])
+    er_h15 = np.abs(original_fft[180] - S[180])
+    er_h27 = np.abs(original_fft[324] - S[324])
+    er_h35 = np.abs(original_fft[420] - S[420])
+    er_h45 = np.abs(original_fft[540] - S[540])
+
+    # Armazenando os erros na matriz
+    erros[i, :] = [er_h1, er_h3, er_h7, er_h15, er_h27, er_h35, er_h45]
+
+    # Calculando o RMSE entre o sinal original e o sinal reconstruído
+    rmse_values[i] = calculate_rmse(y, sig)
+
+    # Calculando o PRD entre o sinal original e o sinal reconstruído
+    prd_values[i] = calculate_prd(y, sig)
+
+# Calculando a média dos erros para cada harmônica
+media_erros = np.mean(erros, axis=0)
+
+# Calculando a média do RMSE e PRD
+media_rmse = np.mean(rmse_values)
+media_prd = np.mean(prd_values)
+
+# Exibindo os resultados médios
+print(f"\nMédia do erro nas harmônicas:")
+for idx, harm in enumerate(harm):
+    print(f"Harmônica {harm}: {media_erros[idx]:.3f}")
+
+print(f"\nMédia do Erro Médio Quadrático (RMSE): {media_rmse:.4f}")
+print(f"Média do PRD: {media_prd:.4f}")
+
+# Gráficos finais
+plt.figure()
+plt.plot(t, y, label='Sinal Original')
+plt.legend()
+plt.xlabel('Tempo (s)')
+plt.ylabel('Amplitude')
+plt.title('Sinal Original')
+plt.grid()
+plt.savefig('sinal_original.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+plt.figure()
+plt.plot(t, sig, 'g', label='Sinal Reconstruído com OMP')
+plt.legend()
+plt.xlabel('Tempo (s)')
+plt.ylabel('Amplitude')
+plt.title('Sinal Reconstruído')
+plt.grid()
+plt.savefig('sinal_reconstruido.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Determinar o tempo correspondente a três ciclos
+num_ciclos = 3
+tempo_final = num_ciclos / f
+
+# Filtrar os dados para o intervalo de 0 a tempo_final
+indices_tres_ciclos = t <= tempo_final
+t_tres_ciclos = t[indices_tres_ciclos]
+sig_tres_ciclos = sig[indices_tres_ciclos]
+
+# Plotar o sinal reconstruído para três ciclos
+plt.figure()
+plt.plot(t_tres_ciclos, sig_tres_ciclos, 'g', label='Sinal Reconstruído (3 Ciclos)')
+plt.legend()
+plt.xlabel('Tempo (s)')
+plt.ylabel('Amplitude')
+plt.title('Sinal Reconstruído para 3 Ciclos')
+plt.grid()
+plt.savefig('sinal_reconstruido_3_ciclos.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Plot final com PRD
+plt.figure()
+plt.plot(t, sig, label=f'Sinal Reconstruído (CR={CR}%, PRD={media_prd:.4f})')
+plt.legend()
+plt.xlabel('Tempo (s)')
+plt.ylabel('Amplitude')
+plt.title('Sinal Reconstruído e PRD')
+plt.grid()
+plt.show()
