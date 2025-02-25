@@ -1,27 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Feb 24 09:39:19 2025
-
-@author: josea
-"""
-
-# -*- coding: utf-8 -*-
-"""
-Reconstrução de sinal usando FFT e OMP
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.fftpack as spfft
 from sklearn.linear_model import OrthogonalMatchingPursuit
 
 # Função para calcular o PRD
-
 def calculate_prd(original, reconstructed):
-    return (np.linalg.norm(original - np.real(reconstructed)) / np.linalg.norm(original)) * 100
-
-#def calculate_prd(original, reconstructed):
-    #return np.sqrt(np.sum((original - reconstructed) ** 2) / np.sum(original ** 2)) * 100
+    return np.sqrt(np.sum((original - reconstructed) ** 2) / np.sum(original ** 2)) * 100
 
 # Função para calcular o Erro Médio Quadrático (RMSE)
 def calculate_rmse(original, reconstructed):
@@ -36,88 +19,88 @@ Ts = 1 / Fs     # Período de amostragem
 t = np.linspace(0, (Fs - 1) * Ts, Fs)  # Vetor de tempo
 
 # Sinal harmônico com componentes fundamentais e harmônicos ímpares
-x = np.cos(2 * np.pi * f * t)  # Componente fundamental (60 Hz)
+x = np.cos(2 * np.pi * f * t)
 y = np.zeros_like(x)
 
 harm = [1, 3, 7, 15, 27, 35, 45]
 for h in harm:
     y += (1 / h) * np.cos(2 * np.pi * h * f * t)
 
-# FFT do sinal original
-original_fft = 2 * np.abs(np.fft.fft(y) / len(y))[:len(y) // 2]
-frequencies = np.fft.fftfreq(len(y), d=Ts)[:len(y) // 2]
+# FFT do sinal original (normalizada)
+original_fft = np.fft.fft(y) / len(y)
+frequencies = np.fft.fftfreq(len(y), d=Ts)
 
 # Amostragem Compressiva
 CR = 50  # Taxa de compressão
-N = Fs
-M = int(N * (100 - CR) / 100)  # Número de medições
+N = len(y)
+M = int(N * (100 - CR) / 100)
 amostras_aleatorias = np.random.choice(N, M, replace=False)
 amostras_aleatorias.sort()
-s = y[amostras_aleatorias]
-t2 = t[amostras_aleatorias]
 
-# Matriz de medição usando FFT
-A = np.real(spfft.fft(np.identity(N)))
-A = A[amostras_aleatorias]
+# Matriz de medição baseada na FFT (complexa)
+A_complex = np.fft.fft(np.eye(N)) / np.sqrt(N)
+A_complex = A_complex[amostras_aleatorias, :]  # Seleciona as linhas correspondentes às amostras aleatórias
+
+# Separar parte real e imaginária da matriz A
+A_real = np.vstack([np.real(A_complex), np.imag(A_complex)])
+
+# Medições compressivas
+s = y[amostras_aleatorias]
+s_real = np.hstack([np.real(s), np.imag(s)])  # Como s é real, a parte imaginária é zero
 
 # Inicializando os erros
 erros = np.zeros((200, 7))
 rmse_values = np.zeros(200)
+prd_values = np.zeros(200)
 
 # Loop de reconstrução
 for i in range(200):
-    print(f"Iteração {i + 1} de 200 ({(i + 1) / 200 * 100:.1f}%)")
+    print(f"Iteração {i + 1} de 20")
 
-    # Aplicando OMP para reconstrução do sinal
-    omp = OrthogonalMatchingPursuit(n_nonzero_coefs=10)
-    omp.fit(A, s)
-    recovered_signal = omp.coef_
+    # OMP para reconstrução no domínio da frequência
+    omp = OrthogonalMatchingPursuit(n_nonzero_coefs=10)  # Aumentado para 30 coeficientes
+    omp.fit(A_real, s_real)
+    recovered_coeffs = omp.coef_
 
-    # Reconstrução do sinal a partir da FFT inversa
-    sig = np.fft.ifft(recovered_signal)
+    # Reconstrução do sinal no domínio do tempo usando IFFT
+    sig = np.fft.ifft(recovered_coeffs)
+    sig = np.real(sig)
 
-    # Calculando PRD e RMSE
-    prd_value = calculate_prd(y, np.real(sig))
-    rmse_values[i] = calculate_rmse(y, np.real(sig))
+    # Normalização do sinal reconstruído
+    sig = sig * (np.max(y) / np.max(sig))
 
-    # FFT do sinal reconstruído
-    S = 2 * np.abs(np.fft.fft(sig) / len(sig))[:len(sig) // 2]
+    # Cálculo do PRD e RMSE
+    prd_values[i] = calculate_prd(y, sig)
+    rmse_values[i] = calculate_rmse(y, sig)
+
+    # FFT do sinal reconstruído (normalizada)
+    reconstructed_fft = np.fft.fft(sig) / len(sig)
 
     # Cálculo dos erros nas harmônicas
-    indices_harm = [12, 36, 84, 180, 324, 420, 540]
+    indices_harm = [int(h * f * len(y) / Fs) for h in harm]  # Índices corretos das harmônicas
     for j, idx in enumerate(indices_harm):
-        erros[i, j] = np.abs(original_fft[idx] - S[idx])
+        erros[i, j] = np.abs(original_fft[idx] - reconstructed_fft[idx])
 
 # Cálculo das médias
-media_erros = np.mean(erros, axis=0)
+erros_medios = np.mean(erros, axis=0)
 media_rmse = np.mean(rmse_values)
+media_prd = np.mean(prd_values)
 
 # Exibindo os resultados
-print("\nMédia dos erros por harmônica:")
-for i, h in enumerate(harm):
-    print(f"Harmônica {h}: {media_erros[i]:.3f}")
+print("\nMédia do erro nas harmônicas:")
+for idx, h in enumerate(harm):
+    print(f"Harmônica {h}: {erros_medios[idx]:.4f}")
 
-print(f"\nMédia do Erro Médio Quadrático (RMSE): {media_rmse:.4f}")
-print(f"Média do PRD: {prd_value:.4f}%")
+print(f"\nMédia do RMSE: {media_rmse:.4f}")
+print(f"Média do PRD: {media_prd:.4f}%")
 
-# Plot do sinal reconstruído
-plt.figure(figsize=(12, 6))
+# Gráficos
+plt.figure(figsize=(10, 6))
 plt.plot(t, y, label='Sinal Original')
-plt.plot(t, np.real(sig), label=f'Sinal Reconstruído (PRD={prd_value:.2f}%)', linestyle='--')
+plt.plot(t, sig, label='Sinal Reconstruído', linestyle='dashed')
+plt.legend()
 plt.xlabel('Tempo (s)')
 plt.ylabel('Amplitude')
-plt.legend()
-plt.title('Sinal Original vs. Reconstruído')
-plt.grid()
-plt.show()
-
-# Comparação das FFTs
-plt.figure(figsize=(12, 6))
-plt.plot(frequencies, original_fft, label='FFT do Sinal Original')
-plt.plot(frequencies, S, label='FFT do Sinal Reconstruído', linestyle='--')
-plt.xlabel('Frequência (Hz)')
-plt.ylabel('Amplitude')
-plt.legend()
-plt.title('Comparação das FFTs')
+plt.title(f'Reconstrução do Sinal com CR={CR}%, PRD={media_prd:.2f}%')
 plt.grid()
 plt.show()
