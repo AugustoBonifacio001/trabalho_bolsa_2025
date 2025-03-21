@@ -1,0 +1,134 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import OrthogonalMatchingPursuit
+
+print("cosamp, dft")
+
+# Função para calcular o PRD
+def calculate_prd(original, reconstructed):
+    return np.sqrt(np.sum((original - reconstructed) ** 2) / np.sum(original ** 2)) * 100
+
+# Função para calcular o Erro Médio Quadrático (RMSE)
+def calculate_rmse(original, reconstructed):
+    return np.sqrt(np.mean((original - reconstructed) ** 2))
+
+# Parâmetros do sinal
+Nppc = 256 # Número de pontos por ciclo
+Nc = 12         # Número de ciclos
+f = 60          # Frequência fundamental (Hz)
+Fs = 8192       # Frequência de amostragem
+Ts = 1 / Fs     # Período de amostragem
+t = np.linspace(0, (Fs - 1) * Ts, Fs)  # Vetor de tempo
+
+# Sinal harmônico com componentes fundamentais e harmônicos ímpares
+x = np.cos(2 * np.pi * f * t)
+y = np.zeros_like(x)
+
+harm = [1, 3, 7, 15, 27, 35, 45]
+for h in harm:
+    y += (1 / h) * np.cos(2 * np.pi * h * f * t)
+
+# DFT do sinal original
+original_dft = np.fft.fft(y)
+frequencies = np.fft.fftfreq(len(y), d=Ts)
+
+# Amostragem Compressiva
+CR = 50 # Taxa de compressão
+N = len(y)
+M = int(N * (100 - CR) / 100)
+amostras_aleatorias = np.random.choice(N, M, replace=False)
+amostras_aleatorias.sort()
+
+# Matriz de medição baseada na DFT
+A = np.fft.fft(np.eye(N), axis=0)
+A = A[amostras_aleatorias, :]
+
+# Medições compressivas
+s = y[amostras_aleatorias]
+
+# Inicializando os erros
+erros = np.zeros((200, 7))
+rmse_values = np.zeros(200)
+prd_values = np.zeros(200)
+
+# Implementação do COSAMP
+def cosamp(A, s, num_coefs=14, iterations=5):
+    """
+    Implementação do algoritmo COSAMP
+    """
+    r = s.copy()  # Residual
+    support = []  # Suporte (coeficientes não nulos)
+    x = np.zeros(A.shape[1])  # Solução inicial
+
+    for it in range(iterations):
+        # Seleção de índices
+        correlations = np.abs(A.T @ r)
+        idx = np.argsort(correlations)[-num_coefs:]
+        support = np.union1d(support, idx)  # Atualizando o suporte
+
+        # Resolução do problema de mínimos quadrados
+        A_selected = A[:, support.astype(int)]
+        x_selected = np.linalg.lstsq(A_selected, s, rcond=None)[0]
+
+        # Atualizando o vetor x
+        x[support.astype(int)] = x_selected
+
+        # Atualizando o residual
+        r = s - A @ x
+
+    return x
+
+a = 200
+reconstructed_dft = np.zeros([a, len(x)])
+
+# Loop de reconstrução
+for i in range(a):
+    print(f"Iteração {i + 1} de 200")
+
+    # Aplicando COSAMP para reconstrução no domínio da frequência
+    recovered_coeffs = cosamp(A, s, num_coefs=14, iterations=5)
+
+    # Reconstrução do sinal no domínio do tempo usando IDFT
+    sig = np.fft.ifft(recovered_coeffs)
+    sig = np.real(sig)
+
+    # Normalização do sinal reconstruído
+    sig = sig * (np.max(y) / np.max(sig))
+
+    # Cálculo do PRD e RMSE
+    prd_values[i] = calculate_prd(y, sig)
+    rmse_values[i] = calculate_rmse(y, sig)
+
+    # DFT do sinal reconstruído
+    reconstructed_dft[i, :] = np.fft.fft(sig)
+
+    # Cálculo dos erros nas harmônicas
+    indices_harm = [int(h * f * len(y) / Fs) for h in harm]
+    for j, idx in enumerate(indices_harm):
+        erros[i, j] = np.abs(original_dft[idx] - reconstructed_dft[i, idx])
+
+# Cálculo das médias
+erros_medios = np.mean(erros, axis=0)
+media_rmse = np.mean(rmse_values)
+media_prd = np.mean(prd_values)
+
+reconstructed_dft = np.sum(reconstructed_dft) / a
+
+# Exibindo os resultados
+print("\nMédia do erro nas harmônicas:")
+for idx, h in enumerate(harm):
+    print(f"Harmônica {h}: {erros_medios[idx]:.4f}")
+
+print(f"\nMédia do RMSE: {media_rmse:.4f}")
+print(f"Média do PRD: {media_prd:.4f}%")
+
+# Gráficos
+plt.figure(figsize=(10, 6))
+plt.plot(t, y, label='Sinal Original')
+plt.plot(t, sig, label='Sinal Reconstruído', linestyle='dashed')
+plt.legend()
+plt.xlabel('Tempo (s)')
+plt.ylabel('Amplitude')
+plt.title(f'Reconstrução do sinal com a DFT e CR={CR}%, PRD={media_prd:.2f}%')
+plt.grid()
+plt.show()
